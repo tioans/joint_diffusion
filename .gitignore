@@ -1,0 +1,7 @@
+/data/*
+/results/*
+/wandb/*
+*.pyc
+*.gz
+/evaluations/evaluation_models/emnist_data/
+/evaluations/evaluation_models/mnist_data/
