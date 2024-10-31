@@ -26,18 +26,28 @@ class Validator:
             self.classifier_loss = torch.nn.CrossEntropyLoss()
 
         print("Preparing validator")
-        if dataset in ["MNIST", "Omniglot"]:  # , "DoubleMNIST"]:
+        if dataset in ["MNIST", "Omniglot", "ppla", "ppla_raw"]:  # , "DoubleMNIST"]:
             if dataset in ["Omniglot"]:
                 from evaluations.evaluation_models.lenet_Omniglot import Model
+            elif dataset in ["ppla_raw"]:
+                from evaluations.evaluation_models.lenet_ts import Model
             else:
                 from evaluations.evaluation_models.lenet import Model
+            
             net = Model()
-            model_path = "evaluations/evaluation_models/lenet_" + dataset
+            if dataset in ["ppla"]:
+                model_path = "evaluations/evaluation_models/lenet"
+            elif dataset in ["ppla_raw"]:
+                model_path = "evaluations/evaluation_models/lenet_ppla_raw"
+            else:
+                model_path = "evaluations/evaluation_models/lenet_" + dataset
+
             net.load_state_dict(torch.load(model_path))
             net.to(device)
             net.eval()
             self.dims = 128 if dataset in ["Omniglot", "DoubleMNIST"] else 84  # 128
             self.score_model_func = net.part_forward
+
         elif dataset.lower() in ["celeba", "doublemnist", "fashionmnist", "flowers", "cern", "cifar10", "lsun",
                                  "imagenet", "malaria", "cifar100", "birds", "svhn", "mnist32", "da_svhn_mnist",
                                  "office_a", "office_d", "office_w", "usps"]:
@@ -80,6 +90,13 @@ class Validator:
 
     @torch.no_grad()
     def calculate_results(self, train_loop, n_generated_examples, dataset=None, batch_size=128):
+
+        print("Validation calulate results")
+        print("Train loop: ", train_loop)
+        print("N generated examples: ", n_generated_examples)
+        print("Dataset: ", dataset)
+        print("Batch size: ", batch_size)
+
         test_loader = self.dataloader
         distribution_orig = []
         distribution_gen = []
@@ -107,10 +124,13 @@ class Validator:
             distribution_orig = np.array(np.concatenate(distribution_orig)).reshape(-1, self.dims)
             np.save(stats_file_path, distribution_orig)
 
+        print("Generating examples for validation!")
         examples, _ = train_loop.generate_examples(total_num_exapmles=n_generated_examples,
                                                    max_classes=self.n_classes,
                                                    batch_size=batch_size)
+
         examples_to_generate = n_generated_examples
+
         i = 0
         while examples_to_generate > 0:
             print(examples_to_generate)

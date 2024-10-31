@@ -68,7 +68,8 @@ class TrainLoop:
             max_class=None,
             validator=None,
             validation_interval=None,
-            semi_supervised_training=False
+            semi_supervised_training=False,
+            dims=1
     ):
         self.params = params
         self.model = model
@@ -130,6 +131,7 @@ class TrainLoop:
                 for _ in range(len(self.ema_rate))
             ]
         self.semi_supervised_training = semi_supervised_training
+        self.dims = dims  # TODO: Added dims
         if th.cuda.is_available():
             self.use_ddp = False
             find_unused_params = self.diffusion.skip_classifier_loss
@@ -353,11 +355,30 @@ class TrainLoop:
             sample_fn = (
                 self.diffusion.p_sample_loop  # if not self.use_ddim else diffusion.ddim_sample_loop
             )
+
+            # Adjust shape according to dims
+            if self.dims == 1:
+                self.image_size = 28
+                shape = (num_examples_to_generate, self.in_channels, self.image_size)
+            elif self.dims == 2:
+                shape = (num_examples_to_generate, self.in_channels, self.image_size, self.image_size)
+            else:
+                raise ValueError(f"Unsupported dims: {self.dims}")
+
             sample = sample_fn(
                 model,
-                (num_examples_to_generate, self.in_channels, self.image_size, self.image_size),
+                shape,
                 clip_denoised=False, model_kwargs=model_kwargs,
             )
+            # Verify the shape of the generated samples
+            assert sample.shape == shape, f"Expected {shape} but got {sample.shape}"
+
+            # sample = sample_fn(
+            #     model,
+            #     (num_examples_to_generate, self.in_channels, self.image_size, self.image_size),
+            #     clip_denoised=False, model_kwargs=model_kwargs,
+            # )
+
             all_images.extend(sample.cpu())
             print(f"generated: {len(all_images)}/{total_num_exapmles}")
             i += 1
@@ -368,6 +389,51 @@ class TrainLoop:
     @th.no_grad()
     def plot(self, step, num_examples=8):
         sample, _ = self.generate_examples(num_examples, max_classes=self.max_class)
+
+        # check dims of data
+        if self.dims == 1:
+            self.plot_1d_samples(sample, step, num_examples)
+        elif self.dims == 2:
+            self.plot_2d_samples(sample, step, num_examples)
+        else:
+            raise ValueError(f"Unsupported dims: {self.dims}")
+
+    @th.no_grad()
+    def plot_1d_samples(self, sample, step, num_examples):
+        print("Plotting samples!")
+        print("Num samples: ", sample.size(0))
+        print("Num channels: ", sample.size(1))
+
+        num_samples = sample.size(0)
+        num_channels = sample.size(1)
+
+        fig, axes = plt.subplots(num_samples, 1, figsize=(15, num_samples * 3), sharex=True)
+        if num_samples == 1:
+            axes = [axes]  # Make the axes iterable if there's only one sample
+
+        for sample_idx in range(num_samples):
+            for channel_idx in range(num_channels):
+                axes[sample_idx].plot(sample[sample_idx, channel_idx, :].detach().cpu().numpy(), label=f'Channel {channel_idx + 1}')
+            
+            axes[sample_idx].set_title(f"Sample {sample_idx + 1}")
+            axes[sample_idx].set_xlabel("Time Step")
+            if sample_idx == 0:
+                axes[sample_idx].legend(loc="upper right")
+        
+        fig.tight_layout()
+        
+        # Save plot
+        if not os.path.exists(os.path.join(logger.get_dir(), f"samples/")):
+            os.makedirs(os.path.join(logger.get_dir(), f"samples/"))
+        out_plot = os.path.join(logger.get_dir(), f"samples/step_{step:06d}.png")
+        plt.savefig(out_plot)
+        if logger.get_rank_without_mpi_import() == 0:
+            wandb.log({"sampled_1d_signals": wandb.Image(out_plot)})
+        plt.close(fig)
+
+
+    @th.no_grad()
+    def plot_2d_samples(self, sample, step, num_examples):
         samples_grid = make_grid(sample.detach().cpu(), num_examples, normalize=True).permute(1, 2, 0)
         sample_wandb = wandb.Image(samples_grid.permute(2, 0, 1), caption=f"samples")
         logs = {"sampled_images": sample_wandb}

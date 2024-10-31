@@ -217,6 +217,8 @@ def create_model(
             channel_mult = (1, 2, 2, 2)
         elif image_size == 28:
             channel_mult = (1, 2, 2)
+        elif image_size == 18:
+            channel_mult = (1, 1, 1)
         else:
             raise ValueError(f"unsupported image size: {image_size}")
     else:
@@ -329,6 +331,8 @@ def create_classifier(
         channel_mult = (1, 2, 2, 2)
     elif image_size == 28:
         channel_mult = (1, 2, 2)
+    elif image_size == 18:
+        channel_mult = (1, 1, 1)
     else:
         raise ValueError(f"unsupported image size: {image_size}")
 

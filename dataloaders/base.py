@@ -634,3 +634,120 @@ def Birds(dataroot, skip_normalization=False, train_aug=False, image_size=64):
         fast_birds = FastDataset(data[0], data[1], dataset.number_classes)
         torch.save(fast_birds, save_path)
     return fast_birds, fast_birds, image_size, 3
+
+
+def ppla(dataroot, skip_normalization=False, train_aug=False, size=28):
+    """ A custom implementation for the PPLA dataset structure"""
+
+    if skip_normalization:
+        val_transform = transforms.Compose([
+            transforms.Grayscale(3),
+            transforms.Resize(size),
+            transforms.ToTensor(),
+         ])
+    else:
+        val_transform = transforms.Compose([
+            transforms.Grayscale(3),
+            transforms.Resize(size),
+            transforms.ToTensor(),
+            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+        ])
+
+    train_transform = val_transform
+    if train_aug:
+        train_transform = transforms.Compose([
+            transforms.RandomCrop(size=size, padding=4),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            normalize,
+        ])
+
+    # Load custom dataset
+    train_dataset = torchvision.datasets.ImageFolder(
+        root=f"{dataroot}/train",
+        transform=train_transform
+    )
+    train_dataset = CacheClassLabel(train_dataset)
+
+    val_dataset = torchvision.datasets.ImageFolder(
+        root=f"{dataroot}/val",
+        transform=val_transform
+    )
+    val_dataset = CacheClassLabel(val_dataset)
+
+    # Return the datasets, resolution, and number of channels
+    return train_dataset, val_dataset, size, 3
+
+
+# Custom dataset class
+class NumpyDataset(Dataset):
+    """Custom Dataset returning samples from .npy files."""
+    def __init__(self, data, labels, transform=None, padding=None, n_classes=2):
+        self.data = data
+        self.labels = labels
+        self.transform = transform
+        self.padding = padding
+        self.number_classes = n_classes
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        X = self.data[idx]
+        y = self.labels[idx]
+        
+        if self.transform:
+            X = self.transform(X, padding=self.padding, dtype=torch.float32)
+            y = self.transform(y, padding=self.padding, dtype=torch.int8)
+        
+        return X, y
+
+
+def convert_np_to_tensor(x, padding=0, dtype=torch.float32):
+    """Method which converts a numpy array into a torch tensor given a type."""
+    if len(x.shape) == 2 and x.shape[1] < 28:
+        # If input is 2D and the second dimension is less than 28, pad it with zeros
+        padding_width = 28 - x.shape[1]
+        x = np.pad(x, ((0, 0), (0, padding_width)), mode='constant', constant_values=padding)
+    
+    return torch.tensor(x, dtype=dtype)  # Convert the numpy array element to a torch tensor
+
+
+from sklearn.model_selection import train_test_split
+def ppla_raw(dataroot, skip_normalization=False, train_aug=False, size=28, random_state=42):
+    """ A custom implementation for the PPLA dataset structure using .npy files.
+        Size currently not used
+    """
+        
+    # load the data files 
+    # read the one file in the folder
+    data = np.load(file=f"{dataroot}/data.npy")
+    labels = np.load(file=f"{dataroot}/labels.npy")
+
+    if skip_normalization:
+        transform = convert_np_to_tensor
+    else:
+        transform = convert_np_to_tensor
+        print("Implement normalization skip!")
+
+    if train_aug:
+        #TODO: add data augmentation
+        print("Implement data augmentation!")
+
+    # # Split the data into train and validation sets with stratification
+    X_train_ppla, X_val_ppla, y_train_ppla, y_val_ppla = train_test_split(
+        data, labels, test_size=0.2, stratify=labels, random_state=random_state
+    )
+
+    # Load custom dataset
+    train_dataset = NumpyDataset(data=X_train_ppla, labels=y_train_ppla, transform=transform, padding=0)
+    val_dataset = NumpyDataset(data=X_val_ppla, labels=y_val_ppla, transform=transform, padding=0)
+
+    print("Dataset: Size: ", data.shape[1], "; Num channels: ", data.shape[0])
+    print("Dataset: ", type(data), " Shape: ", data.shape, "; Labels: ", type(labels), " Shape: ", labels.shape)
+    
+    sample_data, sample_label = train_dataset[0]  # to return the updated shape if a transform changed it
+    print("Dataset: new Size: ", sample_data.shape)
+
+    # Return the datasets, resolution, and number of channels ()
+    return train_dataset, val_dataset, sample_data.shape[1], sample_data.shape[0]

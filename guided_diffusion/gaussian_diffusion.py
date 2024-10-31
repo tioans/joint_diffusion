@@ -797,7 +797,9 @@ class GaussianDiffusion:
         output = th.where((t == 0), decoder_nll, kl)
         return {"output": output, "pred_xstart": out["pred_xstart"]}
 
+    # TODO: MAKE SURE THE AUGMENTATION HERE IS NOT NECEESSARY, CHANGED FROM TRUE TO FALSE
     def calculate_classifier_loss(self, model, x_start, y, step, x_t, t):
+        augment_flag = False
         selected_indices_with_labels = (y != -1)
         zero_classifier_loss = False
         if self.semi_supervised_training and (
@@ -806,26 +808,26 @@ class GaussianDiffusion:
                     selected_indices_with_labels):
                 x = torch.cat([self.semi_supervised_data_buffer, (x_start[selected_indices_with_labels])])
                 y = torch.cat([self.semi_supervised_labels_buffer, (y[selected_indices_with_labels])])
-                out_classifier = model.model.module.classify(x, th.zeros_like(y), augmentation=True)
+                out_classifier = model.model.module.classify(x, th.zeros_like(y), augmentation=augment_flag)
                 self.semi_supervised_labels_buffer = []
                 self.semi_supervised_data_buffer = []
             elif len(self.semi_supervised_data_buffer) == 0:
                 self.semi_supervised_labels_buffer = y[selected_indices_with_labels]
                 self.semi_supervised_data_buffer = x_start[selected_indices_with_labels]
-                out_classifier = model.model.module.classify(x_start, th.zeros_like(y), augmentation=True)
+                out_classifier = model.model.module.classify(x_start, th.zeros_like(y), augmentation=augment_flag)
                 zero_classifier_loss = True
             else:
                 self.semi_supervised_data_buffer = torch.cat(
                     [self.semi_supervised_data_buffer, (x_start[selected_indices_with_labels])])
                 self.semi_supervised_labels_buffer = torch.cat(
                     [self.semi_supervised_labels_buffer, (y[selected_indices_with_labels])])
-                out_classifier = model.model.module.classify(x_start, th.zeros_like(y), augmentation=True)
+                out_classifier = model.model.module.classify(x_start, th.zeros_like(y), augmentation=augment_flag)
                 zero_classifier_loss = True
         else:
             if self.train_noised_classifier:
-                out_classifier = model.model.module.classify(x_t, t, augmentation=True)
+                out_classifier = model.model.module.classify(x_t, t, augmentation=augment_flag)
             else:
-                out_classifier = model.model.module.classify(x_start, th.zeros_like(t), augmentation=True)
+                out_classifier = model.model.module.classify(x_start, th.zeros_like(t), augmentation=augment_flag)
 
         if self.multi_label_classifier:
             y = y.float()

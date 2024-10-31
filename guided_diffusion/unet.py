@@ -78,6 +78,9 @@ class TimestepEmbedSequential(nn.Sequential, TimestepBlock):
             if isinstance(layer, TimestepBlock):
                 x = layer(x, emb)
             else:
+                # Added a check to support 1D data
+                if len(x.shape) > 3:
+                    x = x.squeeze(0)
                 x = layer(x)
         return x
 
@@ -438,6 +441,89 @@ class Classifier(nn.Module):
         x = self.fc_2(x)
         return x
 
+class Classifier1D(nn.Module):
+    def __init__(self, n_classes, sequence_length, num_channels, max_pooling=False):
+        super().__init__()
+        
+        if max_pooling:
+            self.pooling_fn = nn.MaxPool1d
+        else:
+            self.pooling_fn = nn.AvgPool1d
+
+        if sequence_length == 28:
+            # self.pooling = self.pooling_fn(7)
+            self.pooling = self.pooling_fn(kernel_size=7)
+            # in_features = num_channels * 4  # Adjust based on pooling size
+            in_features = num_channels * 21
+        else:
+            raise NotImplementedError("Pooling size not implemented for sequence length: ", sequence_length)
+        # elif sequence_length == 32:
+        #     self.pooling = self.pooling_fn(8)
+        #     in_features = num_channels * 4  # Adjust based on pooling size
+        # elif sequence_length == 64:
+        #     self.pooling = self.pooling_fn(16)
+        #     in_features = num_channels * 4  # Adjust based on pooling size
+
+        print("Batchnorm input size: ", in_features + 1)
+
+        self.dropout_1 = nn.Dropout(0.7)
+        self.bn_1 = nn.BatchNorm1d(in_features + 1)
+        self.fc_1 = nn.Linear(in_features + 1, in_features // 2)
+        self.dropout_2 = nn.Dropout(0.7)
+        self.bn_2 = nn.BatchNorm1d(in_features // 2)
+        self.fc_2 = nn.Linear(in_features // 2, n_classes)
+
+
+    def forward(self, x, hs, t=None):
+        # print("Before pooling x: ", x.shape)
+        x = self.pooling(x)
+        # print("After pooling x: ", x.shape)
+        x = x.squeeze(2)
+        # print("After pooling squeeze: ", x.shape)
+
+        hs_rep = []
+        for _hs in hs:
+            # hs_rep.append(nn.AvgPool1d(_hs.size(2))(_hs).squeeze(2))
+
+            # Create an average pooling layer with kernel size equal to the sequence length of _hs
+            avg_pool = nn.AvgPool1d(kernel_size=_hs.size(2))
+            pooled_hs = avg_pool(_hs)  # Apply the pooling layer to _hs
+            squeezed_hs = pooled_hs.squeeze(2)  # Squeeze the size 1 dimension (third dimension) to turn it into a 2D tensor
+            hs_rep.append(squeezed_hs)  # Append the processed tensor to hs_rep
+        hs_rep = th.cat(hs_rep, 1)
+        # print("hs_rep: ", hs_rep.shape)
+
+        # if t is not None:
+        #     x = th.cat([x, hs_rep, t.unsqueeze(1)], 1)
+        # else:
+        #     x = th.cat([x, hs_rep], 1)
+
+        # make sure x is the same shape as ts
+        x = x.view(x.size(0), -1)
+        # print("Reshaped x: ", x.shape)
+
+        if t is not None:
+            # print("t before unsqueeze: ", t.shape)
+            t = t.unsqueeze(1)
+            # print("t after unsqueeze: ", t.shape)
+
+        if t is not None:
+            x = th.cat([x, hs_rep, t], 1)
+        else:
+            x = th.cat([x, hs_rep], 1)
+
+        # print("x after cat: ", x.shape)
+
+        x = self.dropout_1(x)
+        x = self.bn_1(x)
+        x = self.fc_1(x)
+        x = F.leaky_relu(x)
+        x = self.dropout_2(x)
+        x = self.bn_2(x)
+        x = self.fc_2(x)
+
+        return x
+
 
 class UNetModel(nn.Module):
     """
@@ -481,7 +567,7 @@ class UNetModel(nn.Module):
             dropout=0,
             channel_mult=(1, 2, 4, 8),
             conv_resample=True,
-            dims=2,
+            dims=1,  #TODO: Manually put dims default value to 1 (for time-series data); make it better
             num_classes=None,
             use_checkpoint=False,
             use_fp16=False,
@@ -499,6 +585,7 @@ class UNetModel(nn.Module):
         if num_heads_upsample == -1:
             num_heads_upsample = num_heads
         if classifier_augmentation:
+            print("Classifier augmentation!")
             if in_channels == 1:
                 self.augmentation = K.augmentation.ImageSequential(
                     RandomResizedCrop((image_size, image_size), scale=(0.5, 1), p=0.25),
@@ -536,8 +623,16 @@ class UNetModel(nn.Module):
         self.num_heads = num_heads
         self.num_head_channels = num_head_channels
         self.num_heads_upsample = num_heads_upsample
+        # Classifier training
         if train_with_classifier:
-            self.clasifier = Classifier(n_classes=num_classes, image_size=image_size, num_channels=model_channels)
+            print("Training with classifier!")
+            if dims == 1:
+                self.classifier = Classifier1D(n_classes=num_classes, sequence_length=image_size, num_channels=model_channels, max_pooling=False)
+            elif dims == 2:
+                self.clasifier = Classifier(n_classes=num_classes, image_size=image_size, num_channels=model_channels)
+            else:
+                raise NotImplementedError("Classifier only implemented for 1D or 2D data!")
+
         self.num_classes = num_classes
 
         time_embed_dim = model_channels * 4
@@ -725,12 +820,19 @@ class UNetModel(nn.Module):
 
         h = x.type(self.dtype)
         for module in self.input_blocks:
+            # print("Before Input Block:", h.shape)  # Debug - Before Input Block
             h = module(h, emb)
             hs.append(h)
+            # print("After Input Block:", h.shape)  # Debug - After Input Block
+
+        # print("Middle Block:", h.shape)  # Debug - Middle Block
         h = self.middle_block(h, emb)
+
         for module in self.output_blocks:
+            # print("Tensor size: ", h.shape)
             h = th.cat([h, hs.pop()], dim=1)
             h = module(h, emb)
+            
         h = h.type(x.dtype)
         return self.out(h)
 
@@ -768,7 +870,7 @@ class UNetModel(nn.Module):
         if augmentation:
             x = self.augmentation(x)
         internal_representations, hs = self.partial_forward(x, t)
-        return self.clasifier(internal_representations, hs, t)
+        return self.classifier(internal_representations, hs, t)
 
 
 class SuperResModel(UNetModel):
@@ -806,7 +908,7 @@ class EncoderUNetModel(nn.Module):
             dropout=0,
             channel_mult=(1, 2, 4, 8),
             conv_resample=True,
-            dims=2,
+            dims=2,  
             use_checkpoint=False,
             use_fp16=False,
             num_heads=1,
